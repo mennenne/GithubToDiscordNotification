@@ -196,3 +196,15 @@ jobs:
       - name: Warn missing webhook
         if: ${{ env.DISCORD_WEBHOOK == '' }}
         run: echo "Secret DISCORD_WEBHOOK_URL not set; no notification sent."
+```
+### 🧠 Notes & Privacy
+
+This workflow is **non-intrusive** by design.  
+It does **not** mention or ping anyone in Discord (`@everyone`, `@here`, or specific users).
+
+Mentions are explicitly disabled via:
+
+```json
+"allowed_mentions": { "parse": [] }
+This ensures that your repository notifications remain informative, quiet, and spam-free — ideal for teams using shared channels.
+```
