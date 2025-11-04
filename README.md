@@ -206,5 +206,5 @@ Mentions are explicitly disabled via:
 
 ```json
 "allowed_mentions": { "parse": [] }
-This ensures that your repository notifications remain informative, quiet, and spam-free — ideal for teams using shared channels.
 ```
+This ensures that your repository notifications remain informative, quiet, and spam-free — ideal for teams using shared channels.
