@@ -34,7 +34,7 @@ It displays commit details, author info, branch, and a direct diff link — all 
 ### ⚙️ Example Workflow File
 
 ```yaml
-name: Discord Push & PR Notifications (Pretty)
+name: Discord Push & PR Notifications
 
 on:
   push:
