@@ -38,18 +38,33 @@ name: Discord Push & PR Notifications
 
 on:
   push:
-    branches: ['**']
+    branches: ['**']   # tutto
   pull_request:
     types: [opened, reopened, synchronize, closed]
   workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   notify:
     runs-on: ubuntu-latest
     env:
       DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+    # evita run da fork PR (segreti non visibili) e opzionale: ignora bot
+    if: >
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) &&
+      (github.sender.type != 'Bot')
 
     steps:
+      - name: Early exit if webhook missing
+        if: ${{ env.DISCORD_WEBHOOK == '' }}
+        run: echo "Secret DISCORD_WEBHOOK_URL not set; no notification sent." && exit 0
+
       - name: Build Discord payload
         id: payload
         env:
@@ -68,28 +83,32 @@ jobs:
           set -euo pipefail
           EVENT_JSON="$GITHUB_EVENT_PATH"
 
-          COLOR_SUCCESS=3066993   # green
-          COLOR_INFO=3447003      # blue
-          COLOR_WARN=15105570     # orange
+          # skip volontario
+          if jq -e '
+              (.head_commit.message? // .pull_request.title? // "") | test("\\[skip-notify\\]"; "i")
+            ' "$EVENT_JSON" > /dev/null; then
+            echo "payload={\"skip\":true}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-          # GitHub author avatar
+          COLOR_SUCCESS=3066993
+          COLOR_INFO=3447003
+          COLOR_WARN=15105570
           AVATAR_URL="https://github.com/${ACTOR}.png?size=64"
 
           if [ "$EVENT_NAME" = "push" ]; then
             SHORT_SHA=$(printf "%s" "$SHA" | cut -c1-7)
-            COMMITS=$(jq -r '.commits | length' "$EVENT_JSON")
-            # Compact commit list (max 5)
-            LIST=$(jq -r '.commits[0:5][] | "• \(.message | gsub("\\n"; " ") | sub(" +$"; ""))  [link](\(.url)) — _\(.author.username // .author.name)_"' "$EVENT_JSON")
-            [ "$COMMITS" -gt 5 ] && LIST="$LIST\n… and $(("$COMMITS"-5)) more commits"
-
-            DIFF_URL=""
-            if [ -n "${COMPARE_URL:-}" ] && [ "${COMPARE_URL:-null}" != "null" ]; then
-              DIFF_URL="$COMPARE_URL"
+            COMMITS=$(jq -r '.commits | length // 0' "$EVENT_JSON")
+            if [ "$COMMITS" -gt 0 ]; then
+              LIST=$(jq -r '.commits[0:5][] | "• \(.message | gsub("\\n"; " ") | sub(" +$"; ""))  [link](\(.url)) — _\(.author.username // .author.name)_"' "$EVENT_JSON")
+              [ "$COMMITS" -gt 5 ] && LIST="$LIST\n… and $(("$COMMITS"-5)) more commits"
+            else
+              LIST=""
             fi
+            DIFF_URL="${COMPARE_URL:-}"
 
-            # Build embed JSON (no literal \n)
             EMBED=$(jq -n \
-              --arg title "🚀 Push to $REPO (@$REF_NAME)" \
+              --arg title "🚀 Push su $REPO (@$REF_NAME)" \
               --arg url   "${WEB_URL}/commit/${SHA}" \
               --arg author_name "$ACTOR" \
               --arg author_icon "$AVATAR_URL" \
@@ -99,7 +118,7 @@ jobs:
               --arg footer "GitHub • $REPO" \
               --arg avatar_url "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" \
               --argjson color $COLOR_INFO \
-              --arg ts "$(date +%s)" '
+              --arg ts "$(date --iso-8601=seconds)" '
             {
               username: "Repo Bot",
               avatar_url: $avatar_url,
@@ -108,36 +127,28 @@ jobs:
                 title: $title,
                 url: $url,
                 color: $color,
-                timestamp: ( ( $ts | tonumber ) | todate ),
-                author: {
-                  name: $author_name,
-                  icon_url: $author_icon
-                },
+                timestamp: $ts,
+                author: { name: $author_name, icon_url: $author_icon },
                 fields: (
                   [
                     {name:"Author", value: ("**" + $author_name + "**"), inline:true},
                     {name:"Commit", value: $field_commit, inline:true}
                   ] +
-                  ( if $field_diff != "" then [ {name:"Diff", value: ("[View on GitHub](" + $field_diff + ")"), inline:true} ] else [] end ) +
-                  ( if $field_commits != "" then [ {name:"Commits", value: $field_commits, inline:false} ] else [] end )
+                  (if $field_diff != "" then [ {name:"Diff", value: ("[View on GitHub](" + $field_diff + ")"), inline:true} ] else [] end) +
+                  (if $field_commits != "" then [ {name:"Commits", value: $field_commits, inline:false} ] else [] end)
                 ),
                 footer: { text: $footer }
               }]
             }')
 
-            { echo "payload<<JSON"; echo "$EMBED"; echo "JSON"; } >> "$GITHUB_OUTPUT"
-
           else
-            # Handle Pull Request events
             ACTION=$(jq -r '.action // ""' "$EVENT_JSON")
             COLOR=$COLOR_INFO
             TITLE="📦 PR #${PR_NUMBER} ${ACTION} — ${PR_TITLE}"
             if [ "$ACTION" = "closed" ] && [ "${PR_MERGED:-false}" = "true" ]; then
-              COLOR=$COLOR_SUCCESS
-              TITLE="✅ PR #${PR_NUMBER} merged — ${PR_TITLE}"
+              COLOR=$COLOR_SUCCESS; TITLE="✅ PR #${PR_NUMBER} merged — ${PR_TITLE}"
             elif [ "$ACTION" = "closed" ]; then
-              COLOR=$COLOR_WARN
-              TITLE="⛔️ PR #${PR_NUMBER} closed — ${PR_TITLE}"
+              COLOR=$COLOR_WARN; TITLE="⛔️ PR #${PR_NUMBER} closed — ${PR_TITLE}"
             fi
 
             EMBED=$(jq -n \
@@ -148,29 +159,23 @@ jobs:
               --arg footer "GitHub • $REPO" \
               --arg avatar_url "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" \
               --argjson color $COLOR \
-              --arg ts "$(date +%s)" '
+              --arg ts "$(date --iso-8601=seconds)" '
             {
               username: "Repo Bot",
               avatar_url: $avatar_url,
               allowed_mentions: { parse: [] },
               embeds: [{
-                title: $title,
-                url: $url,
-                color: $color,
-                timestamp: ( ( $ts | tonumber ) | todate ),
-                author: {
-                  name: $author_name,
-                  icon_url: $author_icon
-                },
+                title: $title, url: $url, color: $color, timestamp: $ts,
+                author: { name: $author_name, icon_url: $author_icon },
                 footer: { text: $footer }
               }]
             }')
-
-            { echo "payload<<JSON"; echo "$EMBED"; echo "JSON"; } >> "$GITHUB_OUTPUT"
           fi
 
+          { echo "payload<<JSON"; echo "$EMBED"; echo "JSON"; } >> "$GITHUB_OUTPUT"
+
       - name: Send to Discord
-        if: ${{ env.DISCORD_WEBHOOK != '' }}
+        if: ${{ steps.payload.outputs.payload && fromJSON(steps.payload.outputs.payload).skip != true }}
         env:
           DISCORD_WEBHOOK: ${{ env.DISCORD_WEBHOOK }}
           PAYLOAD: ${{ steps.payload.outputs.payload }}
@@ -178,12 +183,14 @@ jobs:
           set -euo pipefail
           echo "$PAYLOAD" | jq '.' > payload.json
 
-          # Trim "Commits" field if too long
-          LEN=$(jq -r '.embeds[0].fields[]? | select(.name=="Commits") | .value | length' payload.json || echo 0)
-          if [ "$LEN" -gt 1800 ]; then
-            jq '
-              (.embeds[0].fields[]? | select(.name=="Commits") | .value) |= (.[:1700] + "…")
-            ' payload.json > payload.json.tmp && mv payload.json.tmp payload.json
+          # Discord field max ~1024 chars -> tronca a 1000
+          HAS_COMMITS=$(jq -r '.embeds[0].fields[]? | select(.name=="Commits") | 1' payload.json || echo 0)
+          if [ "$HAS_COMMITS" = "1" ]; then
+            VAL_LEN=$(jq -r '.embeds[0].fields[]? | select(.name=="Commits") | .value | length' payload.json)
+            if [ "$VAL_LEN" -gt 1000 ]; then
+              jq '(.embeds[0].fields[]? | select(.name=="Commits") | .value) |= (.[:1000] + "…")' \
+                payload.json > payload.json.tmp && mv payload.json.tmp payload.json
+            fi
           fi
 
           code=$(curl -sS -o /tmp/resp.txt -w "%{http_code}" \
@@ -192,10 +199,6 @@ jobs:
           echo "HTTP $code"
           if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
             echo "Discord webhook failed:"; cat /tmp/resp.txt; exit 1; fi
-
-      - name: Warn missing webhook
-        if: ${{ env.DISCORD_WEBHOOK == '' }}
-        run: echo "Secret DISCORD_WEBHOOK_URL not set; no notification sent."
 ```
 ### 🧠 Notes & Privacy
 
