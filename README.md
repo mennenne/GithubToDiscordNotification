@@ -211,3 +211,9 @@ Mentions are explicitly disabled via:
 "allowed_mentions": { "parse": [] }
 ```
 This ensures that your repository notifications remain informative, quiet, and spam-free — ideal for teams using shared channels.
+
+### ‼️ N.B.
+
+This solution works well for a single repository on a free GitHub plan. However, if you want to extend and automate it across all repositories, you have two options:
+   Upgrade your plan and use built-in GitHub Actions at the organization level.
+   Stay on the free plan and use Cloudflare to host the webhooks and automate notifications with a Worker.
